@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(SimpleDelay VERSION 1.0.0)
+project(UndergroundComp VERSION 1.0.0)
 
 include(FetchContent)
 FetchContent_Declare(JUCE
@@ -7,27 +7,27 @@ FetchContent_Declare(JUCE
     GIT_TAG 8.0.4)
 FetchContent_MakeAvailable(JUCE)
 
-juce_add_plugin(SimpleDelay
+juce_add_plugin(UndergroundComp
     COMPANY_NAME "MeinStudio"
     PLUGIN_MANUFACTURER_CODE Mstu
-    PLUGIN_CODE Sdly
+    PLUGIN_CODE Ugcp
     FORMATS VST3
-    PRODUCT_NAME "Analog Echo"
+    PRODUCT_NAME "Underground Comp"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-target_sources(SimpleDelay PRIVATE
+target_sources(UndergroundComp PRIVATE
     PluginProcessor.cpp PluginProcessor.h
     PluginEditor.cpp PluginEditor.h)
 
-target_compile_definitions(SimpleDelay PUBLIC
+target_compile_definitions(UndergroundComp PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0)
 
-target_link_libraries(SimpleDelay
+target_link_libraries(UndergroundComp
     PRIVATE juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags
            juce::juce_recommended_lto_flags

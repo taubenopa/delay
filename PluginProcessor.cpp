@@ -3,14 +3,10 @@
 
 namespace
 {
-    constexpr float kPi    = juce::MathConstants<float>::pi;
     constexpr float kTwoPi = juce::MathConstants<float>::twoPi;
-
-    // Notenwerte in Viertelnoten: 1/2, 1/4, 1/4., 1/8, 1/8., 1/8T, 1/16, 1/16T
-    const double kBeats[] = { 2.0, 1.0, 1.5, 0.5, 0.75, 1.0 / 3.0, 0.25, 1.0 / 6.0 };
 }
 
-SimpleDelayProcessor::SimpleDelayProcessor()
+CompProcessor::CompProcessor()
     : AudioProcessor (BusesProperties()
           .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
@@ -18,86 +14,76 @@ SimpleDelayProcessor::SimpleDelayProcessor()
 {
 }
 
-juce::AudioProcessorValueTreeState::ParameterLayout SimpleDelayProcessor::createLayout()
+juce::AudioProcessorValueTreeState::ParameterLayout CompProcessor::createLayout()
 {
     using namespace juce;
     std::vector<std::unique_ptr<RangedAudioParameter>> p;
 
-    p.push_back (std::make_unique<AudioParameterFloat> (
-        ParameterID { "time", 1 }, "Time",
-        NormalisableRange<float> (20.0f, 1500.0f, 0.1f, 0.4f), 350.0f));
-    p.push_back (std::make_unique<AudioParameterBool> (
-        ParameterID { "sync", 1 }, "Sync", false));
+    auto addF = [&p] (const char* id, const char* name, float lo, float hi, float step, float skew, float def)
+    {
+        p.push_back (std::make_unique<AudioParameterFloat> (
+            ParameterID { id, 1 }, name, NormalisableRange<float> (lo, hi, step, skew), def));
+    };
+    auto addB = [&p] (const char* id, const char* name, bool def)
+    {
+        p.push_back (std::make_unique<AudioParameterBool> (ParameterID { id, 1 }, name, def));
+    };
+
+    addB ("bypass", "Bypass", false);
+    addF ("input",     "Input",       -24.0f,  24.0f, 0.1f,  1.0f,   0.0f);
+    addF ("threshold", "Threshold",   -60.0f,   0.0f, 0.1f,  1.0f, -20.0f);
+    addF ("ratio",     "Ratio",         1.0f,  20.0f, 0.1f,  0.6f,   4.0f);
+    addF ("attack",    "Attack",        0.1f, 100.0f, 0.01f, 0.4f,   5.0f);
+    addF ("release",   "Release",      10.0f,1000.0f, 1.0f,  0.4f, 120.0f);
+    addF ("knee",      "Knee",          0.0f,  24.0f, 0.1f,  1.0f,   6.0f);
+    addF ("makeup",    "Makeup",        0.0f,  24.0f, 0.1f,  1.0f,   0.0f);
+    addB ("automakeup",  "Auto Makeup",  true);
+    addB ("autorelease", "Auto Release", false);
     p.push_back (std::make_unique<AudioParameterChoice> (
-        ParameterID { "division", 1 }, "Division",
-        StringArray { "1/2", "1/4", "1/4.", "1/8", "1/8.", "1/8T", "1/16", "1/16T" }, 3));
-    p.push_back (std::make_unique<AudioParameterFloat> (
-        ParameterID { "feedback", 1 }, "Feedback",
-        NormalisableRange<float> (0.0f, 1.1f, 0.001f), 0.4f));
-    p.push_back (std::make_unique<AudioParameterFloat> (
-        ParameterID { "mix", 1 }, "Mix",
-        NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.35f));
-    p.push_back (std::make_unique<AudioParameterFloat> (
-        ParameterID { "tone", 1 }, "Tone",
-        NormalisableRange<float> (500.0f, 12000.0f, 1.0f, 0.4f), 4500.0f));
-    p.push_back (std::make_unique<AudioParameterFloat> (
-        ParameterID { "lowcut", 1 }, "Low Cut",
-        NormalisableRange<float> (20.0f, 600.0f, 1.0f, 0.5f), 40.0f));
-    p.push_back (std::make_unique<AudioParameterFloat> (
-        ParameterID { "drive", 1 }, "Drive",
-        NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.2f));
-    p.push_back (std::make_unique<AudioParameterFloat> (
-        ParameterID { "wow", 1 }, "Wow",
-        NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.25f));
-    p.push_back (std::make_unique<AudioParameterFloat> (
-        ParameterID { "rate", 1 }, "Rate",
-        NormalisableRange<float> (0.1f, 6.0f, 0.01f, 0.5f), 0.7f));
-    p.push_back (std::make_unique<AudioParameterFloat> (
-        ParameterID { "noise", 1 }, "Noise",
-        NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.1f));
-    p.push_back (std::make_unique<AudioParameterBool> (
-        ParameterID { "pingpong", 1 }, "Ping-Pong", false));
-    p.push_back (std::make_unique<AudioParameterFloat> (
-        ParameterID { "output", 1 }, "Output",
-        NormalisableRange<float> (-12.0f, 12.0f, 0.1f), 0.0f));
+        ParameterID { "mode", 1 }, "Mode", StringArray { "VCA", "FET", "OPTO" }, 0));
+    addF ("detector",  "Detector",      0.0f,   1.0f, 0.001f, 1.0f,  0.3f);
+    addF ("schpf",     "SC HPF",       20.0f, 500.0f, 1.0f,  0.5f,  90.0f);
+    addB ("sclisten",  "SC Listen",    false);
+    addF ("link",      "Stereo Link",   0.0f,   1.0f, 0.001f, 1.0f,  1.0f);
+    addF ("deess",     "De-Ess",        0.0f,   1.0f, 0.001f, 1.0f,  0.0f);
+    addF ("deessfreq", "De-Ess Freq", 3000.0f,10000.0f, 10.0f, 1.0f, 6500.0f);
+    addF ("body",      "Body",         -6.0f,   6.0f, 0.1f,  1.0f,   0.0f);
+    addF ("air",       "Air",          -6.0f,  10.0f, 0.1f,  1.0f,   0.0f);
+    addF ("drive",     "Drive",         0.0f,   1.0f, 0.001f, 1.0f,  0.1f);
+    addF ("mix",       "Mix",           0.0f,   1.0f, 0.001f, 1.0f,  1.0f);
+    addB ("limiter",   "Limiter",      true);
+    addF ("ceiling",   "Ceiling",     -12.0f,   0.0f, 0.1f,  1.0f,  -1.0f);
+    addF ("output",    "Output",      -24.0f,  12.0f, 0.1f,  1.0f,   0.0f);
 
     return { p.begin(), p.end() };
 }
 
-void SimpleDelayProcessor::prepareToPlay (double newSampleRate, int)
+void CompProcessor::prepareToPlay (double newSampleRate, int)
 {
     sampleRateHz = newSampleRate;
 
-    const int size = (int) (sampleRateHz * 3.2) + 8;
-    delayBuffer.setSize (2, size);
-    delayBuffer.clear();
-    writePos = 0;
-
     auto get = [this] (const char* id) { return apvts.getRawParameterValue (id)->load(); };
+    auto dbToGain = [] (float db) { return juce::Decibels::decibelsToGain (db); };
 
-    sTime.reset (sampleRateHz, 0.15);     // langsames Gleiten = Pitch-Effekt wie bei Analog-Delays
-    sTime.setCurrentAndTargetValue (get ("time"));
-    sFeedback.reset (sampleRateHz, 0.03);
-    sFeedback.setCurrentAndTargetValue (get ("feedback"));
-    sMix.reset (sampleRateHz, 0.03);
-    sMix.setCurrentAndTargetValue (get ("mix"));
-    sOutput.reset (sampleRateHz, 0.03);
-    sOutput.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (get ("output")));
-    sDrive.reset (sampleRateHz, 0.03);
-    sDrive.setCurrentAndTargetValue (get ("drive"));
-    sWow.reset (sampleRateHz, 0.05);
-    sWow.setCurrentAndTargetValue (get ("wow"));
-    sTone.reset (sampleRateHz, 0.03);
-    sTone.setCurrentAndTargetValue (get ("tone"));
-    sLowCut.reset (sampleRateHz, 0.03);
-    sLowCut.setCurrentAndTargetValue (get ("lowcut"));
+    sInput.reset (sampleRateHz, 0.03);   sInput.setCurrentAndTargetValue (dbToGain (get ("input")));
+    sOutput.reset (sampleRateHz, 0.03);  sOutput.setCurrentAndTargetValue (dbToGain (get ("output")));
+    sMix.reset (sampleRateHz, 0.03);     sMix.setCurrentAndTargetValue (get ("mix"));
+    sDrive.reset (sampleRateHz, 0.03);   sDrive.setCurrentAndTargetValue (get ("drive"));
+    sDeess.reset (sampleRateHz, 0.03);   sDeess.setCurrentAndTargetValue (get ("deess"));
+    sMakeup.reset (sampleRateHz, 0.05);  sMakeup.setCurrentAndTargetValue (1.0f);
+    sBypass.reset (sampleRateHz, 0.02);  sBypass.setCurrentAndTargetValue (get ("bypass") > 0.5f ? 1.0f : 0.0f);
 
     for (int c = 0; c < 2; ++c)
-        hp[c] = lp1[c] = lp2[c] = noiseLp[c] = 0.0f;
-    wowPhase = flutterPhase = 0.0;
+    {
+        lpA[c] = lpB[c] = envHi[c] = envFull[c] = deState[c] = 0.0f;
+        hpA[c] = hpB[c] = msq[c] = grState[c] = dcX[c] = dcY[c] = 0.0f;
+    }
+    lowShelf.reset();
+    highShelf.reset();
+    limGain = 1.0f;
 }
 
-bool SimpleDelayProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool CompProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     const auto& out = layouts.getMainOutputChannelSet();
     if (out != juce::AudioChannelSet::mono() && out != juce::AudioChannelSet::stereo())
@@ -105,7 +91,7 @@ bool SimpleDelayProcessor::isBusesLayoutSupported (const BusesLayout& layouts) c
     return out == layouts.getMainInputChannelSet();
 }
 
-void SimpleDelayProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+void CompProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
 
@@ -114,142 +100,224 @@ void SimpleDelayProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
     for (int ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
         buffer.clear (ch, 0, numSamples);
-
-    const int bufSize = delayBuffer.getNumSamples();
-    if (bufSize < 16 || numCh < 1)
+    if (numCh < 1)
         return;
 
     auto get = [this] (const char* id) { return apvts.getRawParameterValue (id)->load(); };
+    auto dbToGain = [] (float db) { return juce::Decibels::decibelsToGain (db); };
 
-    // --- Delayzeit (frei oder zum Host-Tempo) ---
-    double timeMs = get ("time");
-    if (get ("sync") > 0.5f)
-    {
-        double bpm = 120.0;
-        if (auto* ph = getPlayHead())
-            if (auto pos = ph->getPosition())
-                if (auto b = pos->getBpm())
-                    bpm = *b;
-        if (bpm < 20.0) bpm = 20.0;
-        const int idx = juce::jlimit (0, 7, (int) get ("division"));
-        timeMs = 60000.0 / bpm * kBeats[idx];
-    }
-    timeMs = juce::jlimit (5.0, 2800.0, timeMs);
-    currentDelayMs.store ((float) timeMs);
+    // ---------------- Parameter ----------------
+    const float thr        = get ("threshold");
+    const float ratioParam = get ("ratio");
+    const float ratio      = ratioParam >= 19.9f ? 1000.0f : ratioParam;
+    const float knee       = get ("knee");
+    const float attackMs   = get ("attack");
+    const float releaseMs  = get ("release");
+    const int   mode       = juce::jlimit (0, 2, (int) get ("mode"));
+    const bool  autoRel    = get ("autorelease") > 0.5f;
+    const bool  autoMk     = get ("automakeup") > 0.5f;
+    const bool  scListen   = get ("sclisten") > 0.5f;
+    const bool  limiterOn  = get ("limiter") > 0.5f;
+    const float link       = get ("link");
+    const float detMix     = get ("detector");
+    const float ceilLin    = dbToGain (get ("ceiling"));
 
-    sTime.setTargetValue ((float) timeMs);
-    sFeedback.setTargetValue (get ("feedback"));
+    const float srF = (float) sampleRateHz;
+
+    // Charakter der drei Modi
+    const bool  opto      = (mode == 2);
+    const float attScale  = (mode == 0) ? 1.0f : (mode == 1 ? 0.4f : 2.5f);
+    const float relScale  = (mode == 0) ? 1.0f : (mode == 1 ? 0.8f : 1.5f);
+    const float driveAdd  = (mode == 1) ? 0.12f : 0.0f;
+
+    // Koeffizienten
+    const float attCoef = std::exp (-1.0f / (juce::jmax (0.03f, attackMs * attScale) * 0.001f * srF));
+    const float aHp     = std::exp (-kTwoPi * get ("schpf") / srF);
+    const float aDe     = std::exp (-kTwoPi * get ("deessfreq") / srF);
+    const float rmsCoef = std::exp (-1.0f / (0.010f * srF));
+    const float envRel  = std::exp (-1.0f / (0.020f * srF));
+    const float deAtt   = std::exp (-1.0f / (0.0004f * srF));
+    const float deRel   = std::exp (-1.0f / (0.030f * srF));
+    const float limRel  = std::exp (-1.0f / (0.080f * srF));
+    const float dcR     = 1.0f - kTwoPi * 5.0f / srF;
+
+    lowShelf.setLowShelf (sampleRateHz, 150.0, get ("body"));
+    highShelf.setHighShelf (sampleRateHz, juce::jmin (9000.0, sampleRateHz * 0.45), get ("air"));
+
+    // Auto-Makeup: grobe Schaetzung aus Threshold und Ratio
+    const float makeupDb = autoMk ? juce::jlimit (0.0f, 24.0f, -thr * (1.0f - 1.0f / ratio) * 0.5f)
+                                  : get ("makeup");
+
+    sInput.setTargetValue (dbToGain (get ("input")));
+    sOutput.setTargetValue (dbToGain (get ("output")));
     sMix.setTargetValue (get ("mix"));
-    sOutput.setTargetValue (juce::Decibels::decibelsToGain (get ("output")));
     sDrive.setTargetValue (get ("drive"));
-    sWow.setTargetValue (get ("wow"));
-    sTone.setTargetValue (get ("tone"));
-    sLowCut.setTargetValue (get ("lowcut"));
+    sDeess.setTargetValue (get ("deess"));
+    sMakeup.setTargetValue (dbToGain (makeupDb));
+    sBypass.setTargetValue (get ("bypass") > 0.5f ? 1.0f : 0.0f);
 
-    const float rate     = get ("rate");
-    const float noiseAmt = get ("noise");
-    const bool pingPong  = get ("pingpong") > 0.5f && numCh == 2;
-    const float sr       = (float) sampleRateHz;
+    // Release-Zeit: manuell, automatisch (programmabhaengig) oder Opto-Verhalten
+    auto relCoefFor = [&] (float st)
+    {
+        const float depth = juce::jlimit (0.0f, 1.0f, st / 12.0f);
+        float tauMs;
+        if (autoRel)    tauMs = 40.0f + 410.0f * depth;
+        else if (opto)  tauMs = releaseMs * 1.5f * (0.6f + 0.9f * depth);
+        else            tauMs = releaseMs * relScale;
+        return std::exp (-1.0f / (tauMs * 0.001f * srF));
+    };
 
     float* io[2] = { buffer.getWritePointer (0), numCh > 1 ? buffer.getWritePointer (1) : nullptr };
-    float* dl[2] = { delayBuffer.getWritePointer (0), delayBuffer.getWritePointer (1) };
+
+    float inPk = 0.0f, outPk = 0.0f, grPk = 0.0f;
 
     for (int i = 0; i < numSamples; ++i)
     {
-        const float tMs    = sTime.getNextValue();
-        const float fb     = sFeedback.getNextValue();
-        const float mix    = sMix.getNextValue();
+        const float inGain = sInput.getNextValue();
         const float outG   = sOutput.getNextValue();
-        const float drive  = sDrive.getNextValue();
-        const float tone   = sTone.getNextValue();
-        const float lowcut = sLowCut.getNextValue();
-        const float wow    = sWow.getNextValue();
+        const float mixV   = sMix.getNextValue();
+        const float driveV = juce::jlimit (0.0f, 1.0f, sDrive.getNextValue() + driveAdd);
+        const float deAmt  = sDeess.getNextValue();
+        const float mkG    = sMakeup.getNextValue();
+        const float byp    = sBypass.getNextValue();
 
-        const float g    = 1.0f + drive * 3.0f;
-        const float aLP  = std::exp (-kTwoPi * tone   / sr);
-        const float aHP  = std::exp (-kTwoPi * lowcut / sr);
-        const float dryG = std::cos (mix * 0.5f * kPi);
-        const float wetG = std::sin (mix * 0.5f * kPi);
+        float orig[2] = { 0.0f, 0.0f }, xg[2] = { 0.0f, 0.0f }, xd[2] = { 0.0f, 0.0f };
+        float sc[2]   = { 0.0f, 0.0f }, det[2] = { 0.0f, 0.0f };
 
-        wowPhase += (double) rate / (double) sr;
-        if (wowPhase >= 1.0) wowPhase -= 1.0;
-        flutterPhase += 6.3 / (double) sr;
-        if (flutterPhase >= 1.0) flutterPhase -= 1.0;
-
-        const float baseDelay = tMs * 0.001f * sr;
-
-        float in[2]  = { 0.0f, 0.0f };
-        float wet[2] = { 0.0f, 0.0f };
-
-        // 1) Lesen + Filtern (Low Cut, dann 2 Tiefpass-Stufen = dunkle Wiederholungen)
-        for (int ch = 0; ch < numCh; ++ch)
+        // 1) Eingang, De-Esser, Sidechain-Detektor
+        for (int c = 0; c < numCh; ++c)
         {
-            in[ch] = io[ch][i];
+            orig[c] = io[c][i];
+            xg[c]   = orig[c] * inGain;
+            inPk    = juce::jmax (inPk, std::abs (xg[c]));
 
-            const double off = (ch == 0) ? 0.0 : 0.25;
-            const float mod = wow * (std::sin (kTwoPi * (float) std::fmod (wowPhase + off, 1.0)) * 0.0025f
-                                   + std::sin (kTwoPi * (float) std::fmod (flutterPhase + off * 1.7, 1.0)) * 0.0004f) * sr;
+            // De-Esser: Hoehen abtrennen und nur dort absenken
+            lpA[c] = (1.0f - aDe) * xg[c] + aDe * lpA[c];
+            lpB[c] = (1.0f - aDe) * lpA[c] + aDe * lpB[c];
+            const float hi = xg[c] - lpB[c];
+            envHi[c]   = juce::jmax (std::abs (hi),   envHi[c]   * envRel);
+            envFull[c] = juce::jmax (std::abs (xg[c]), envFull[c] * envRel);
 
-            const double dly = juce::jlimit (2.0, (double) (bufSize - 4), (double) (baseDelay + mod));
-            double rp = (double) writePos - dly;
-            if (rp < 0.0) rp += (double) bufSize;
+            float redDe = 0.0f;
+            if (deAmt > 0.0005f)
+            {
+                const float ratioDb = 20.0f * std::log10 ((envHi[c] + 1.0e-6f) / (envFull[c] + 1.0e-6f));
+                redDe = juce::jmin (15.0f, deAmt * 1.6f * juce::jmax (0.0f, ratioDb + 10.0f));
+            }
+            const float cDe = redDe > deState[c] ? deAtt : deRel;
+            deState[c] = cDe * deState[c] + (1.0f - cDe) * redDe;
+            xd[c] = lpB[c] + hi * std::pow (10.0f, -deState[c] / 20.0f);
 
-            int i0 = (int) rp;
-            const float frac = (float) (rp - (double) i0);
-            if (i0 >= bufSize) i0 -= bufSize;
-            int i1 = i0 + 1;
-            if (i1 >= bufSize) i1 = 0;
+            // Sidechain: 12 dB/Okt Hochpass, dann Peak/RMS-Mischung
+            hpA[c] = aHp * hpA[c] + (1.0f - aHp) * xd[c];
+            const float s1 = xd[c] - hpA[c];
+            hpB[c] = aHp * hpB[c] + (1.0f - aHp) * s1;
+            sc[c]  = s1 - hpB[c];
 
-            float x = dl[ch][i0] + frac * (dl[ch][i1] - dl[ch][i0]);
-
-            hp[ch] = aHP * hp[ch] + (1.0f - aHP) * x;
-            x -= hp[ch];
-
-            lp1[ch] = (1.0f - aLP) * x + aLP * lp1[ch];
-            lp2[ch] = (1.0f - aLP) * lp1[ch] + aLP * lp2[ch];
-            wet[ch] = lp2[ch];
+            msq[c] = rmsCoef * msq[c] + (1.0f - rmsCoef) * sc[c] * sc[c];
+            const float peak = std::abs (sc[c]);
+            const float rms  = std::sqrt (msq[c]) * 1.4142f;
+            det[c] = peak * (1.0f - detMix) + rms * detMix;
         }
 
-        // 2) Schreiben: Eingang + Feedback, Saettigung, Rauschen
-        for (int ch = 0; ch < numCh; ++ch)
+        float mx = det[0];
+        if (numCh > 1) mx = juce::jmax (mx, det[1]);
+
+        // 2) Kompression, Saettigung, EQ, Mix
+        float out[2] = { 0.0f, 0.0f };
+        for (int c = 0; c < numCh; ++c)
         {
-            float src, fbIn;
-            if (pingPong)
+            const float d       = det[c] + (mx - det[c]) * link;
+            const float levelDb = 20.0f * std::log10 (juce::jmax (d, 1.0e-6f));
+            const float over    = levelDb - thr;
+
+            float red = 0.0f;
+            if (2.0f * over >= -knee)
             {
-                src  = (ch == 0) ? 0.5f * (in[0] + in[1]) : 0.0f;
-                fbIn = fb * wet[1 - ch];
+                const float slope = 1.0f - 1.0f / ratio;
+                if (knee > 0.01f && 2.0f * std::abs (over) <= knee)
+                {
+                    const float t = over + knee * 0.5f;
+                    red = slope * t * t / (2.0f * knee);
+                }
+                else
+                {
+                    red = slope * over;
+                }
             }
-            else
+            if (red < 0.0f) red = 0.0f;
+
+            float& st = grState[c];
+            const float coef = red > st ? attCoef : relCoefFor (st);
+            st = coef * st + (1.0f - coef) * red;
+            grPk = juce::jmax (grPk, st);
+
+            float y = xd[c] * std::pow (10.0f, -st / 20.0f) * mkG;
+
+            if (driveV > 0.001f)
             {
-                src  = in[ch];
-                fbIn = fb * wet[ch];
+                const float a    = 1.0f + 4.0f * driveV;
+                const float bias = 0.12f * driveV;
+                const float tb   = std::tanh (bias);
+                y = (std::tanh (a * y + bias) - tb) / (a * (1.0f - tb * tb));
             }
 
-            noiseLp[ch] = 0.6f * noiseLp[ch] + 0.4f * (rng.nextFloat() * 2.0f - 1.0f);
+            const float yb = y - dcX[c] + dcR * dcY[c];
+            dcX[c] = y;
+            dcY[c] = yb;
+            y = yb;
 
-            const float w = std::tanh (g * (src + fbIn)) / g + noiseLp[ch] * noiseAmt * 0.01f;
-            dl[ch][writePos] = w;
+            y = lowShelf.process (c, y);
+            y = highShelf.process (c, y);
 
-            io[ch][i] = (in[ch] * dryG + wet[ch] * wetG) * outG;
+            float o = (xg[c] * (1.0f - mixV) + y * mixV) * outG;
+            if (scListen)
+                o = sc[c] * outG;
+            out[c] = o;
         }
 
-        if (++writePos >= bufSize)
-            writePos = 0;
+        // 3) Limiter (sofortiger Einsatz, 80 ms Release) und Bypass
+        float limApplied = 1.0f;
+        if (limiterOn && ! scListen)
+        {
+            float pk = std::abs (out[0]);
+            if (numCh > 1) pk = juce::jmax (pk, std::abs (out[1]));
+            const float target = pk > ceilLin ? ceilLin / pk : 1.0f;
+            if (target < limGain) limGain = target;
+            else                  limGain = limRel * limGain + (1.0f - limRel) * target;
+            limApplied = limGain;
+        }
+        else
+        {
+            limGain = 1.0f;
+        }
+
+        for (int c = 0; c < numCh; ++c)
+        {
+            float o = out[c] * limApplied;
+            o = o * (1.0f - byp) + orig[c] * byp;
+            outPk = juce::jmax (outPk, std::abs (o));
+            io[c][i] = o;
+        }
     }
+
+    if (inPk  > inPeak.load())  inPeak.store (inPk);
+    if (outPk > outPeak.load()) outPeak.store (outPk);
+    if (grPk  > grPeak.load())  grPeak.store (grPk);
 }
 
-juce::AudioProcessorEditor* SimpleDelayProcessor::createEditor()
+juce::AudioProcessorEditor* CompProcessor::createEditor()
 {
-    return new SimpleDelayEditor (*this);
+    return new CompEditor (*this);
 }
 
-void SimpleDelayProcessor::getStateInformation (juce::MemoryBlock& destData)
+void CompProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     if (auto xml = apvts.copyState().createXml())
         copyXmlToBinary (*xml, destData);
 }
 
-void SimpleDelayProcessor::setStateInformation (const void* data, int sizeInBytes)
+void CompProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
         apvts.replaceState (juce::ValueTree::fromXml (*xml));
@@ -257,5 +325,5 @@ void SimpleDelayProcessor::setStateInformation (const void* data, int sizeInByte
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new SimpleDelayProcessor();
+    return new CompProcessor();
 }

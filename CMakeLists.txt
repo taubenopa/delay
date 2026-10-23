@@ -12,7 +12,7 @@ juce_add_plugin(SimpleDelay
     PLUGIN_MANUFACTURER_CODE Mstu
     PLUGIN_CODE Sdly
     FORMATS VST3
-    PRODUCT_NAME "Simple Delay"
+    PRODUCT_NAME "Analog Echo"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE

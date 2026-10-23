@@ -18,7 +18,9 @@ juce_add_plugin(SimpleDelay
     NEEDS_MIDI_OUTPUT FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-target_sources(SimpleDelay PRIVATE PluginProcessor.cpp PluginProcessor.h)
+target_sources(SimpleDelay PRIVATE
+    PluginProcessor.cpp PluginProcessor.h
+    PluginEditor.cpp PluginEditor.h)
 
 target_compile_definitions(SimpleDelay PUBLIC
     JUCE_WEB_BROWSER=0

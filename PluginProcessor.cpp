@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "PluginEditor.h"
 
 SimpleDelayProcessor::SimpleDelayProcessor()
     : AudioProcessor (BusesProperties()
@@ -78,6 +79,11 @@ void SimpleDelayProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         }
     }
     writePos = (writePos + buffer.getNumSamples()) % bufSize;
+}
+
+juce::AudioProcessorEditor* SimpleDelayProcessor::createEditor()
+{
+    return new SimpleDelayEditor (*this);
 }
 
 void SimpleDelayProcessor::getStateInformation (juce::MemoryBlock& destData)
